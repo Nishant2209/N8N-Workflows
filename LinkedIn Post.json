@@ -1,0 +1,293 @@
+{
+  "name": "LinkedIn Post",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "62a28ddf-c7ec-4220-90d2-b9041fb3473c",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s",
+          "mode": "list",
+          "cachedResultName": "Linkedin",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Topic",
+              "lookupValue": "N8n Workflow"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        -160
+      ],
+      "id": "558a3f56-fb65-42b7-b536-90495bf06f71",
+      "name": "Get row(s) in sheet",
+      "alwaysOutputData": false,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YrhnCeWBSqq2PKLx",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        16,
+        -160
+      ],
+      "id": "5b6209f4-5399-4d50-9a35-7ef855cbf603",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"{{ $json.Topic }}\",\n  \"auto_parameters\": false,\n  \"topic\": \"general\",\n  \"search_depth\": \"advanced\",\n  \"chunks_per_source\": 3,\n  \"max_results\": 3,\n  \"time_range\": null,\n  \"days\": 7,\n  \"include_answer\": true,\n  \"include_raw_content\": true,\n  \"include_images\": false,\n  \"include_image_descriptions\": false,\n  \"include_favicon\": false,\n  \"include_domains\": [],\n  \"exclude_domains\": [],\n  \"country\": null\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        432,
+        -160
+      ],
+      "id": "21d832b3-fcdf-4e8c-a0b8-ef892a2f8368",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Article 1: {{ $json.results[0].content }}\nArticle 2: {{ $json.results[1].content }}\nArticle 3: {{ $json.results[2].content }}",
+        "options": {
+          "systemMessage": "You are a professional content creator specializing in LinkedIn posts. You will be given 3 articles on related topics. Your task is to:\n\nSynthesize the key takeaways from all three articles into a single, concise, and engaging LinkedIn post.\n\nWrite in an inspiring, optimistic, and professional tone that resonates with business leaders, professionals, and innovators.\n\nEnsure the post is clear, scannable, and impactful, avoiding jargon unless it’s well-known in the industry.\n\nBegin with a strong hook to capture attention in the first 2 sentences.\n\nUse short paragraphs or bullet points for readability.\n\nEnd with a call-to-action or thought-provoking closing statement to encourage engagement.\n\nAdd relevant and trending hashtags (5–8) and a few strategic emojis to enhance visual appeal, but do not overuse them.\n\nKeep the post under 1,200 characters to ensure it’s concise and fully visible in the LinkedIn feed.\n\nYour output should look like a ready-to-post LinkedIn update that blends professional insight with approachability."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        624,
+        -160
+      ],
+      "id": "8e5ee57f-1ff1-43e3-acf6-d3bb672d3f49",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        640,
+        48
+      ],
+      "id": "785851c7-8971-43fa-87ca-8dca606ac229",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s",
+          "mode": "list",
+          "cachedResultName": "Linkedin",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pG0RMt8wGY6GftW9_1-ZviA-_wM0M8CISH7KI_NTv4s/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Topic": "={{ $('Get row(s) in sheet').item.json.Topic }}",
+            "Generation Status": "Complete",
+            "Content": "={{ $json.output }}"
+          },
+          "matchingColumns": [
+            "Topic"
+          ],
+          "schema": [
+            {
+              "id": "Topic",
+              "displayName": "Topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Generation Status",
+              "displayName": "Generation Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Content",
+              "displayName": "Content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        976,
+        -160
+      ],
+      "id": "4ae8f1df-4e39-4ac9-9eb6-b9d95b8ecfa3",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YrhnCeWBSqq2PKLx",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        []
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c7150249-b4e7-4f60-813b-8f1f04511587",
+  "meta": {
+    "instanceId": "00000cd2bf4757d517595a77fc66ad4fa7dc549b89b104566c86c7a201947452"
+  },
+  "id": "JPMZNtstabFeLKyp",
+  "tags": []
+}
