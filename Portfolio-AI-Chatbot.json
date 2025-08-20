@@ -1,0 +1,3198 @@
+{
+  "name": "Portfolio-AI-Chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Input Sanitization and Security\nconst sanitizeInput = (input) => {\n  if (!input || typeof input !== 'string') return '';\n  return input\n    .replace(/<script\\b[^<]*(?:(?!<\\/script>)<[^<]*)*<\\/script>/gi, '')\n    .replace(/[<>\"']/g, '')\n    .trim()\n    .substring(0, 1000); // Limit length\n};\n\n// Rate limiting check\nconst userId = $json.sessionId || 'anonymous';\nconst now = new Date();\nconst rateLimitKey = `rate_limit_${userId}_${now.toISOString().split('T')[0]}`;\n\n// Sanitize input\nconst sanitizedInput = sanitizeInput($json.chatInput);\n\nif (!sanitizedInput) {\n  throw new Error('Invalid input provided');\n}\n\nreturn {\n  ...$json,\n  chatInput: sanitizedInput,\n  userId: userId,\n  timestamp: now.toISOString(),\n  rateLimitKey: rateLimitKey\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        992
+      ],
+      "id": "5938dfa2-29b7-4598-b33a-23bfe8445ffb",
+      "name": "Security & Input Validation"
+    },
+    {
+      "parameters": {
+        "inputText": "=Query: {{ $('Chat Input').item.json.chatInput }}",
+        "categories": {
+          "categories": [
+            {
+              "category": "GENERAL_QUERY"
+            },
+            {
+              "category": "GREETING"
+            },
+            {
+              "category": "SCHEDULE_MEETING"
+            },
+            {
+              "category": "CANCEL_MEETING"
+            },
+            {
+              "category": "RESCHEDULE_MEETING"
+            },
+            {
+              "category": "MISCELLANEOUS"
+            }
+          ]
+        },
+        "options": {
+          "systemPromptTemplate": "=You are an intent classifier. Analyze the user query and respond with ONLY one of these intents:\n- \"GENERAL_QUERY\" - for questions about the person's background, skills, experience\n- \"SCHEDULE_MEETING\" - for requests to schedule meetings, appointments, calls\n- \"CANCEL_MEETING\" - for requests to cancel existing meetings\n- \"RESCHEDULE_MEETING\" - for requests to reschedule existing meetings\n- \"GREETING\" - for basic greetings and introductions or other user query apart from the above 4 intents.\n- \"MISCELLANEOUS\" - anything else apart from the above 5 categories.\n\nQuery: {{$json.query}}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.textClassifier",
+      "typeVersion": 1.1,
+      "position": [
+        736,
+        928
+      ],
+      "id": "6bd8de63-33ea-4eae-b35f-7cb1ad288035",
+      "name": "Enhanced Intent Classifier"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Configuration Management\nconst config = {\n  businessHours: {\n    start: 9,\n    end: 17,\n    timezone: 'Asia/Kolkata'\n  },\n  meetingConstraints: {\n    minDuration: 0.5,\n    maxDuration: 4,\n    advanceBookingHours: 24,\n    maxAdvanceBookingDays: 90\n  },\n  notifications: {\n    reminderHours: [24, 2],\n    adminTelegram: '1528112308'\n  },\n  rateLimits: {\n    meetingsPerDay: 10,\n    messagesPerHour: 50\n  },\n  workingDays: [1, 2, 3, 4, 5] // Monday to Friday\n};\n\nreturn {\n  ...$json,\n  config: config,\n  timestamp: new Date().toISOString()\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        992
+      ],
+      "id": "c901eaa4-5ada-4357-8a5c-6c0f84920f8b",
+      "name": "Configuration Manager"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Enhanced validation with business logic\nconst response = $json.output;\nconst config = $('Configuration Manager').first().json.config;\nconst missing = [];\nconst errors = [];\n\nconsole.log(\"This is the config\", config);\n\n// Basic field validation\nif (!response.name) missing.push('name');\nif (!response.email) missing.push('email');\nif (!response.date) missing.push('date and time');\nif (!response.reason) missing.push('reason for meeting');\nif (!response.duration) missing.push('duration of meeting');\n\n// Email format validation\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (response.email && !emailRegex.test(response.email)) {\n  errors.push('Invalid email format');\n}\n\n// Date and time validation\nif (response.date) {\n  const meetingDate = new Date(response.date);\n  const now = new Date();\n  const minAdvanceTime = new Date(now.getTime() + (config.meetingConstraints.advanceBookingHours * 60 * 60 * 1000));\n  const maxAdvanceTime = new Date(now.getTime() + (config.meetingConstraints.maxAdvanceBookingDays * 24 * 60 * 60 * 1000));\n  \n  // Check if date is valid\n  if (isNaN(meetingDate.getTime())) {\n    errors.push('Invalid date format');\n  } else {\n    // Check if date is in the future\n    if (meetingDate <= now) {\n      errors.push('Meeting date must be in the future');\n    }\n    \n    // Check advance booking constraints\n    if (meetingDate < minAdvanceTime) {\n      errors.push(`Meeting must be scheduled at least ${config.meetingConstraints.advanceBookingHours} hours in advance`);\n    }\n    \n    if (meetingDate > maxAdvanceTime) {\n      errors.push(`Meeting cannot be scheduled more than ${config.meetingConstraints.maxAdvanceBookingDays} days in advance`);\n    }\n    \n    // Convert meeting date to IST timezone for business hours validation\n    const istOffset = 5.5 * 60; // IST is UTC+5:30\n    const meetingDateIST = new Date(meetingDate.getTime() + (istOffset * 60 * 1000));\n    const hour = meetingDateIST.getUTCHours();\n    \n    console.log(\"Meeting date in IST:\", meetingDateIST.toISOString());\n    console.log(\"This is the hour in IST:\", hour);\n    \n    if (hour < config.businessHours.start || hour >= config.businessHours.end) {\n      errors.push(`Meeting must be scheduled during business hours (${config.businessHours.start}:00 - ${config.businessHours.end}:00 ${config.businessHours.timezone})`);\n    }\n    \n    // Check working days (convert to IST for day calculation)\n    const dayOfWeek = meetingDateIST.getUTCDay();\n    console.log(\"Day of week in IST:\", dayOfWeek);\n    \n    if (!config.workingDays.includes(dayOfWeek)) {\n      const workingDayNames = config.workingDays.map(day => \n        ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][day]\n      ).join(', ');\n      errors.push(`Meeting must be scheduled on working days (${workingDayNames})`);\n    }\n  }\n}\n\n// Duration validation\nif (response.duration) {\n  const duration = parseFloat(response.duration);\n  if (isNaN(duration)) {\n    errors.push('Invalid duration format - must be a number');\n  } else if (duration < config.meetingConstraints.minDuration || duration > config.meetingConstraints.maxDuration) {\n    errors.push(`Meeting duration must be between ${config.meetingConstraints.minDuration} and ${config.meetingConstraints.maxDuration} hours`);\n  }\n}\n\nconsole.log(\"These are the errors:\", errors);\n\nconst isComplete = missing.length === 0;\nconst isValid = errors.length === 0;\n\nreturn {\n  ...response,\n  missing: missing,\n  errors: errors,\n  isComplete: isComplete,\n  isValid: isValid,\n  validationStatus: isComplete && isValid ? 'VALID' : isComplete ? 'INVALID_DATA' : 'INCOMPLETE_DATA',\n  meetingDate: response.date ? new Date(response.date) : null\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        1360
+      ],
+      "id": "595ed055-0eb8-4c04-accb-2e6d5d796cd4",
+      "name": "Enhanced Data Validator"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "VALID",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "dd16f7fe-78d6-4dd2-bde4-6ed4ee4e2fd4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Valid Data"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "INCOMPLETE_DATA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "eac1cc81-02f5-4fd7-9e94-6bc9e8ea532c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Missing Data"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "INVALID_DATA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "15f71055-345e-4841-8485-9c5f96397234"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid Data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1728,
+        1360
+      ],
+      "id": "3ece420f-72d8-4318-b5e3-4fb183fd4a2c",
+      "name": "Validation Router"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "1528112308",
+        "message": "=🗓️ NEW MEETING REQUEST\n\n👤 Name: {{ $('Enhanced Information Extractor').item.json.output.name }}\n📧 Email: {{ $('Enhanced Information Extractor').item.json.output.email }}\n📅 Date: {{ new Date($('Enhanced Information Extractor').item.json.output.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' }) }}\n⏱️ Duration: {{ (() => {\n  const d = $('Enhanced Information Extractor').item.json.output.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}\n💭 Reason: {{ $('Enhanced Information Extractor').item.json.output.reason  }}\n📝 Type: {{ $('Enhanced Information Extractor').item.json.output.meetingType }}\n\nDo you want to approve the meeting request?\n\n",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2864,
+        1456
+      ],
+      "id": "93a12637-2011-42c9-b0d3-cb19e31f919b",
+      "name": "Admin Approval Request",
+      "webhookId": "a84c784a-3a82-4d43-b466-fab7d073688d",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "7efbb3ac-bf17-46b5-b976-858e0079e137"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3088,
+        1456
+      ],
+      "id": "35f96a36-88fb-4df3-9066-7f78b736a9d5",
+      "name": "Approval Router"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Enhanced Information Extractor').item.json.output.email }}",
+        "subject": "=Meeting Confirmed: {{ $('Enhanced Information Extractor').item.json.output.reason }} - {{ new Date($('Enhanced Information Extractor').item.json.output.date).toLocaleDateString('en-IN') }}",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #4CAF50; color: white; padding: 20px; text-align: center;\">\n    <h1>Meeting Confirmed ✅</h1>\n  </div>\n  \n  <div style=\"padding: 20px; background-color: #f9f9f9;\">\n    <p>Dear {{ $('Enhanced Information Extractor').item.json.output.name }},</p>\n    \n    <p>I'm pleased to confirm that your meeting request has been approved!</p>\n    \n    <div style=\"background-color: white; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0;\">\n      <h3 style=\"margin-top: 0;\">Meeting Details:</h3>\n      <ul style=\"list-style: none; padding: 0;\">\n        <li><strong>📅 Date & Time:</strong> {{ new Date($('Enhanced Information Extractor').item.json.output.date)\n  .toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }) }}</li>\n        <li><strong>⏱️ Duration:</strong> {{ (() => {\n  const d = $('Enhanced Information Extractor').item.json.output.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}</li>\n        <li><strong>📝 Purpose:</strong> {{ $('Enhanced Information Extractor').item.json.output.reason }}</li>\n        <li><strong>🏷️ Meeting Type:</strong> {{ $('Enhanced Information Extractor').item.json.output.meetingType || 'General' }}</li>\n      </ul>\n    </div>\n    \n    <p><strong>Next Steps:</strong></p>\n    <ul>\n      <li>📧 A calendar invite has been sent to your email address</li>\n      <li>🔔 You'll receive reminder notifications 24 hours and 2 hours before the meeting</li>\n      <li>📞 Meeting link/details will be included in the calendar invite</li>\n    </ul>\n    \n    <p>If you need to reschedule or have any questions, please don't hesitate to reach out.</p>\n    \n    <p>Looking forward to our meeting!</p>\n    \n    <div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;\">\n      <p>Best regards,<br>\n      <strong>Nishant's AI Assistant</strong></p>\n    </div>\n  </div>\n</div>\n",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Nishant Kumar Singh"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3696,
+        1344
+      ],
+      "id": "516e188e-ac3e-4859-bbd5-ae731c6a2b58",
+      "name": "Send Confirmation Email",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "webhookId": "2c67f8c4-f998-4004-9410-d390b96eefb0",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eneTmljaozs8QFMg",
+          "name": "Gmail account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "collection": "meeting_requests",
+        "updateKey": "_id",
+        "fields": "status, requestedAt, calendarEventId",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        4560,
+        1344
+      ],
+      "id": "62bb13cf-96fa-49ae-bccc-3c1c892d095a",
+      "name": "Update Meeting Status (Approved)",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "1528112308",
+        "message": "Please provide a reason for declining this meeting request:",
+        "responseType": "freeText",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3456,
+        1584
+      ],
+      "id": "b1cb7b6b-c27a-403b-97fd-c4aaded9721e",
+      "name": "Rejection Reason Request",
+      "webhookId": "f4cbdb49-227f-4214-ac67-bcfb979892a8",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Enhanced Information Extractor').item.json.output.email }}",
+        "subject": "=Meeting Request Update - {{ $('Enhanced Information Extractor').item.json.output.reason }}",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #f44336; color: white; padding: 20px; text-align: center;\">\n    <h1>Meeting Request Update</h1>\n  </div>\n  \n  <div style=\"padding: 20px; background-color: #f9f9f9;\">\n    <p>Dear {{ $('Enhanced Information Extractor').item.json.output.name }},</p>\n    \n    <p>Thank you for your interest in scheduling a meeting with Nishant.</p>\n    \n    <div style=\"background-color: white; padding: 15px; border-left: 4px solid #f44336; margin: 20px 0;\">\n      <h3 style=\"margin-top: 0;\">Your Original Request:</h3>\n      <ul style=\"list-style: none; padding: 0;\">\n        <li><strong>📅 Date & Time:</strong> {{ new Date($('Enhanced Information Extractor').item.json.output.date)\n  .toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }) }}</li>\n        <li><strong>⏱️ Duration:</strong> {{ (() => {\n  const d = $('Enhanced Information Extractor').item.json.output.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }} hours</li>\n        <li><strong>📝 Purpose:</strong> {{ $('Enhanced Information Extractor').item.json.output.reason }}</li>\n      </ul>\n    </div>\n    \n    <p>Unfortunately, I am unable to approve your meeting request at this time.</p>\n    \n    <div style=\"background-color: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0;\">\n      <h4 style=\"margin-top: 0;\">Reason:</h4>\n      <p>{{ $json.data.text }}</p>\n    </div>\n    \n    <p>I sincerely apologize for any inconvenience this may cause. Please feel free to reach out if you'd like to explore alternative arrangements.</p>\n    \n    <div style=\"background-color: #e8f5e8; padding: 15px; border-left: 4px solid #4CAF50; margin: 20px 0;\">\n      <h4 style=\"margin-top: 0;\">Alternative Options:</h4>\n      <ul>\n        <li>📅 Consider rescheduling for a different time slot</li>\n        <li>📞 Request a shorter meeting duration if possible</li>\n        <li>💬 Reach out directly for urgent matters</li>\n      </ul>\n    </div>\n    \n    <p>Thank you for your understanding.</p>\n    \n    <div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;\">\n      <p>Best regards,<br>\n      <strong>Nishant's AI Assistant</strong></p>\n    </div>\n  </div>\n</div>\n",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Nishant Kumar Singh"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3696,
+        1584
+      ],
+      "id": "a573da09-0997-428b-b43c-ff3fe9699351",
+      "name": "Send Rejection Email",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "webhookId": "e701f6e1-82b9-43a9-a64a-4f2297b8b357",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eneTmljaozs8QFMg",
+          "name": "Gmail account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "collection": "meeting_requests",
+        "updateKey": "_id",
+        "fields": "status, requestedAt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        4560,
+        1584
+      ],
+      "id": "2f0c99d8-eb3d-4913-b72f-4e5acf880255",
+      "name": "Update Meeting Status (Rejected)",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "message": "=I'd love to help you schedule a meeting with Nishant! However, I found some issues with your request:\n\n{{ $json.missing.length > 0 ? '❌ **Missing Information:**\\n' + $json.missing.map(item => `• ${item}`).join('\\n') + '\\n\\n' : '' }}{{ $json.errors.length > 0 ? '⚠️ **Issues Found:**\\n' + $json.errors.map(error => `• ${error}`).join('\\n') + '\\n\\n' : '' }}To proceed, I'll need:\n{{ $json.missing.length > 0 ? $json.missing.map(item => `• Your ${item}`).join('\\n') + '\\n' : '' }}\nPlease provide the missing information and ensure all details meet the requirements. I'll be happy to help once everything is complete!",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        1488
+      ],
+      "id": "894cfe85-1689-44f2-b616-2951b414f047",
+      "name": "Request Missing Information"
+    },
+    {
+      "parameters": {
+        "message": "=❌ I found some issues with your meeting request:\n\n{{ $json.errors.map(error => `• ${error}`).join('\\n') }}\n\nPlease review and submit a new request with the corrected information. I'm here to help once the details meet our scheduling requirements!",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        1712
+      ],
+      "id": "76fdcd71-31d9-4aea-bf12-3d8883999817",
+      "name": "Notify Invalid Data"
+    },
+    {
+      "parameters": {
+        "message": "=✅ Perfect! Your meeting request looks good and has been sent for approval.\n\n📋 **Summary:**\n• **Date & Time:** {{ new Date($json.date)\n  .toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }) }}\n• **Duration:** {{ $json.duration }} hours\n• **Purpose:** {{ $json.reason }}\n• **Type:** {{ $json.meetingType || 'General' }}\n\nI'll notify you as soon as there's an update. Thank you for your request!",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        1456
+      ],
+      "id": "277168d6-7180-4324-957b-f8e6436d5f76",
+      "name": "Notify Approval Pending"
+    },
+    {
+      "parameters": {
+        "message": "=🎉 Great news! Your meeting has been approved!\n\n✅ **Meeting Confirmed:**\n\n**Date & Time:** {{ new Date($('Enhanced Information Extractor').item.json.output.date)\n  .toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }) }}\n• **Duration:** {{ (() => {\n  const d = $('Enhanced Information Extractor').item.json.output.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}\n• **Purpose:** {{ $('Enhanced Information Extractor').item.json.output.reason }}\n\n📧 Check your email ({{ $('Enhanced Information Extractor').item.json.output.email }}) for:\n• Calendar invitation with meeting details\n• Meeting link/instructions\n• Automatic reminders\n\nLooking forward to the meeting!",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        4144,
+        1344
+      ],
+      "id": "ae3454ec-e13d-4007-a9b8-edcb049649ee",
+      "name": "Notify Meeting Approved"
+    },
+    {
+      "parameters": {
+        "message": "=❌ Unfortunately, your meeting request for {{ new Date($('Enhanced Information Extractor').item.json.output.date)\n  .toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }) }} couldn't be approved.\n\n**Reason:** {{ $('Rejection Reason Request').item.json.data.text }}\n\n📧 Please check your email for detailed information and alternative options.\n\nFeel free to submit a new request with different timing. Thank you for your understanding!",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        4144,
+        1584
+      ],
+      "id": "ecdc93d3-1f66-45f0-aa0d-2b961a589793",
+      "name": "Notify Meeting Rejected"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "1-yG83Oy_zEXvGU6BDOTDJ0emwWXAuYZK",
+          "mode": "list",
+          "cachedResultName": "Portfolio"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        320
+      ],
+      "id": "99c790c6-54dd-430c-b959-229664005d6b",
+      "name": "Google Drive Trigger",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "vz3DbE9dRQEZFlb9",
+          "name": "nishant220902@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1920,
+        320
+      ],
+      "id": "d11ea31e-12c8-4498-8687-a68de213148f",
+      "name": "Download Portfolio File",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "vz3DbE9dRQEZFlb9",
+          "name": "nishant220902@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "textSplittingMode": "custom",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2192,
+        480
+      ],
+      "id": "8b8a30fa-af03-4ffc-a8b2-4cb78185ff61",
+      "name": "Document Loader"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        2192,
+        640
+      ],
+      "id": "7d6c4fa6-7063-4a87-9a82-2085de17dce5",
+      "name": "Text Splitter"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "mongoCollection": {
+          "__rl": true,
+          "value": "portfolio_knowledge_database",
+          "mode": "list"
+        },
+        "metadata_field": "data",
+        "vectorIndexName": "portfolio_knowledge_vector_index",
+        "embeddingBatchSize": 50,
+        "options": {
+          "namespace": "portfolio"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreMongoDBAtlas",
+      "typeVersion": 1.3,
+      "position": [
+        2128,
+        320
+      ],
+      "id": "ef1f6fd7-0c4e-4bb1-90d0-d0baa3cbcf04",
+      "name": "Vector Store Insert",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        544
+      ],
+      "id": "7ada049f-1600-40a5-88c1-b0435ca69f59",
+      "name": "RAG LLM Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "collectionName": "n8n_chat_memory",
+        "databaseName": "portfolio_db"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryMongoDbChat",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        544
+      ],
+      "id": "182b39cd-f82e-451e-907f-36f422366cca",
+      "name": "Chat Memory",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Use this to fetch information from portfolio_knowledge_database about Nishant's background, skills, projects, and experience.",
+        "mongoCollection": {
+          "__rl": true,
+          "value": "portfolio_knowledge_database",
+          "mode": "list"
+        },
+        "metadata_field": "data",
+        "vectorIndexName": "portfolio_knowledge_vector_index",
+        "options": {
+          "namespace": "portfolio"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreMongoDBAtlas",
+      "typeVersion": 1.3,
+      "position": [
+        1392,
+        544
+      ],
+      "id": "6809235a-596f-4f65-9516-fe13c6fa675f",
+      "name": "Portfolio Vector Store",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        736,
+        1248
+      ],
+      "id": "8b280ebe-ca3e-4ab0-8100-f069d3f98676",
+      "name": "Classification LLM",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        3376,
+        912
+      ],
+      "id": "898283e7-7297-4776-b531-3b3c463af296",
+      "name": "Meeting Reminder Scheduler"
+    },
+    {
+      "parameters": {
+        "collection": "meeting_requests",
+        "options": {},
+        "query": "={ \"status\": \"APPROVED\", \"date\": { \"$gte\": \"{{ new Date().toISOString() }}\", \"$lte\": \"{{ new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString() }}\" } }"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        3584,
+        912
+      ],
+      "id": "8da402ad-cf88-4bd5-bd4e-1ca0abe32d79",
+      "name": "Find Upcoming Meetings",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Meeting Reminder: {{ $json.reason }} - Tomorrow",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <div style=\"background-color: #2196F3; color: white; padding: 20px; text-align: center;\">\n    <h1>Meeting Reminder 📅</h1>\n  </div>\n  \n  <div style=\"padding: 20px; background-color: #f9f9f9;\">\n    <p>Dear {{ $json.name }},</p>\n    \n    <p>This is a friendly reminder about your upcoming meeting with Nishant.</p>\n    \n    <div style=\"background-color: white; padding: 15px; border-left: 4px solid #2196F3; margin: 20px 0;\">\n      <h3 style=\"margin-top: 0;\">Meeting Details:</h3>\n      <ul style=\"list-style: none; padding: 0;\">\n        <li><strong>📅 Date & Time:</strong> {{ new Date($json.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' }) }}</li>\n        <li><strong>⏱️ Duration:</strong> {{ (() => {\n  const d = $json.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}</li>\n        <li><strong>📝 Purpose:</strong> {{ $json.reason }}</li>\n      </ul>\n    </div>\n    \n    <p><strong>Preparation Tips:</strong></p>\n    <ul>\n      <li>📋 Review the meeting agenda and prepare any questions</li>\n      <li>📱 Ensure your device is charged and internet connection is stable</li>\n      <li>📂 Have any relevant documents ready</li>\n    </ul>\n    \n    <p>Looking forward to our meeting!</p>\n    \n    <div style=\"margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;\">\n      <p>Best regards,<br>\n      <strong>Nishant's AI Assistant</strong></p>\n    </div>\n  </div>\n</div>\n",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Nishant Kumar Singh"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3808,
+        912
+      ],
+      "id": "35c14b75-c2e6-4585-b0f6-4db0afc55c18",
+      "name": "Send Reminder Email",
+      "webhookId": "84a28881-7e52-4f02-a205-d9b9754baa65",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eneTmljaozs8QFMg",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        3376,
+        704
+      ],
+      "id": "a5c79d26-7668-462f-9070-19abc2b162d9",
+      "name": "Analytics Scheduler"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\n\n// Calculate time periods with proper timezone handling (IST)\nconst istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30\nconst nowIST = new Date(now.getTime() + istOffset);\n\n// Today: Start of day in IST\nconst todayStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), nowIST.getDate());\nconst todayStartUTC = new Date(todayStart.getTime() - istOffset);\n\n// Week: Start of week (Monday) in IST\nconst weekStart = new Date(todayStart);\nconst dayOfWeek = weekStart.getDay();\nconst daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, go back 6 days\nweekStart.setDate(weekStart.getDate() - daysToMonday);\nconst weekStartUTC = new Date(weekStart.getTime() - istOffset);\n\n// Month: Start of month in IST\nconst monthStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), 1);\nconst monthStartUTC = new Date(monthStart.getTime() - istOffset);\n\n// Year: Start of year in IST\nconst yearStart = new Date(nowIST.getFullYear(), 0, 1);\nconst yearStartUTC = new Date(yearStart.getTime() - istOffset);\n\n// Return analytics queries with proper structure\nreturn [{\n  analyticsData: [\n    {\n      period: 'today',\n      periodStart: todayStartUTC.toISOString(),\n      query: { \n        requestedAt: { \n          $gte: todayStartUTC.toISOString() \n        } \n      }\n    },\n    {\n      period: 'week',\n      periodStart: weekStartUTC.toISOString(),\n      query: { \n        requestedAt: { \n          $gte: weekStartUTC.toISOString() \n        } \n      }\n    },\n    {\n      period: 'month',\n      periodStart: monthStartUTC.toISOString(),\n      query: { \n        requestedAt: { \n          $gte: monthStartUTC.toISOString() \n        } \n      }\n    },\n    {\n      period: 'year',\n      periodStart: yearStartUTC.toISOString(),\n      query: { \n        requestedAt: { \n          $gte: yearStartUTC.toISOString() \n        } \n      }\n    }\n  ],\n  timestamp: now.toISOString(),\n  timezone: 'Asia/Kolkata'\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        704
+      ],
+      "id": "4b31f8ce-dd24-4bb1-b5ad-8f243ab57791",
+      "name": "Analytics Processor"
+    },
+    {
+      "parameters": {
+        "operation": "aggregate",
+        "collection": "meeting_requests",
+        "query": "=[\n  {\n    \"$match\": {\n      \"requestedAt\": {\n        \"$gte\": \"{{ $json.analyticsData.periodStart }}\"\n      }\n    }\n  },\n  {\n    \"$group\": {\n      \"_id\": \"$status\",\n      \"count\": { \"$sum\": 1 },\n      \"avgDuration\": { \"$avg\": \"$duration\" },\n      \"totalDuration\": { \"$sum\": \"$duration\" },\n      \"meetingTypes\": { \"$addToSet\": \"$meetingType\" },\n      \"uniqueUsers\": { \"$addToSet\": \"$userId\" }\n    }\n  },\n  {\n    \"$addFields\": {\n      \"status\": \"$_id\",\n      \"avgDurationRounded\": { \"$round\": [\"$avgDuration\", 2] }\n    }\n  },\n  {\n    \"$sort\": { \"count\": -1 }\n  }\n]"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        4016,
+        704
+      ],
+      "id": "03b61b9f-6945-43a2-bd49-d3516b2db6a9",
+      "name": "Generate Analytics",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "analytics_metrics",
+        "fields": "period, timestamp, timezone, metrics",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        4432,
+        704
+      ],
+      "id": "42e2ad27-d743-4df0-b2e5-84c82b4e478d",
+      "name": "Save Analytics",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        3376,
+        480
+      ],
+      "id": "e739868f-5e55-4ab1-8f28-f3c19a0056cf",
+      "name": "Error Handler"
+    },
+    {
+      "parameters": {
+        "chatId": "1528112308",
+        "text": "=🚨 **Workflow Error Alert**\n\n**Error:** {{ $json.error.message }}  \n**Node:** {{ $json.error.node?.name || 'Unknown' }}  \n**Time:** {{ new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' }) }}  \n**Workflow:** {{ $workflow.name }}  \n\nPlease check the workflow execution for details.\n",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        480
+      ],
+      "id": "a50f2e61-1549-48c9-b464-840087bcff22",
+      "name": "Error Notification",
+      "webhookId": "23a4ec41-04cc-4ca7-8b81-8ca8de6f17a8",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "error_logs",
+        "fields": "timestamp,error,workflow,executionId",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        3808,
+        480
+      ],
+      "id": "9914954d-3c41-49f1-a57c-d90c41ce21b9",
+      "name": "Log Error",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseMode": "responseNodes"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        208,
+        992
+      ],
+      "id": "cd48fde9-2c9d-49ef-a2a9-2804c2bdfa3d",
+      "name": "Chat Input",
+      "webhookId": "bb05d1a2-3ab6-482f-919e-601bf366e2d9"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4800,
+        1584
+      ],
+      "id": "40ce9a14-b7cd-4768-a9bb-21d52b235513",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4768,
+        1344
+      ],
+      "id": "d57afc95-1a82-474a-8451-9ece9d6b9d12",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "message": "={{ $json.output }}",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        1504,
+        320
+      ],
+      "id": "84019ab8-6528-4a6d-99dd-c9cede1da8ca",
+      "name": "Respond to Chat"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "meeting_requests",
+        "fields": "name,email,date,duration,reason,meetingType,status,requestedAt,userId,",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        2432,
+        1456
+      ],
+      "id": "cf2fdb28-bf41-40e8-92db-2b78c5ea0e82",
+      "name": "Save Meeting Request",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "1528112308",
+        "text": "Meeting Request Rejected!",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3904,
+        1584
+      ],
+      "id": "c30df441-465f-43c7-903d-14fe4618e3b7",
+      "name": "Rejection Text",
+      "webhookId": "230fe9fd-3fa5-42d2-aa48-2685ad76f557",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=1528112308",
+        "text": "=Meeting Request Approved!",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3904,
+        1344
+      ],
+      "id": "62181187-2f52-49b3-a3f6-90d94c2c62c7",
+      "name": "Approval Text",
+      "webhookId": "d10cc16b-ec29-44ef-98bb-380f16de23ee",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Data Validation for Meeting Scheduler",
+        "height": 672,
+        "width": 1104
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1104,
+        1280
+      ],
+      "typeVersion": 1,
+      "id": "fd21b228-efb4-48a8-8e2e-d88a08adfa02",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Insert Data to vector DB",
+        "height": 496,
+        "width": 784
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1712,
+        256
+      ],
+      "typeVersion": 1,
+      "id": "bfa0c447-5373-49b1-9ed6-bfa0b7ddefa1",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "47c96f8c-af92-4a43-8267-770a9aeb7f8d",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "7755dffe-731e-4a02-9ca2-27b469be70b9",
+              "name": "email",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "fd89d776-4cd8-4f73-b60b-5aa289eee610",
+              "name": "date",
+              "value": "={{ $json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "7f4daf6c-45f2-4cb1-9bcf-26cdfd1e3998",
+              "name": "duration",
+              "value": "={{ $json.duration }}",
+              "type": "number"
+            },
+            {
+              "id": "0e1d794b-b75f-4ce9-bfa9-a6ae4334c6ed",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "e9504b12-1774-4b64-b579-0b527be12f38",
+              "name": "meetingType",
+              "value": "={{ $json.meetingType }}",
+              "type": "string"
+            },
+            {
+              "id": "19762b04-c20a-4b39-ae92-6e2a2515fbef",
+              "name": "userId",
+              "value": "={{ $('Security & Input Validation').item.json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "6ccdefff-915d-4ed0-9cec-f7fdd9688818",
+              "name": "status",
+              "value": "PENDING",
+              "type": "string"
+            },
+            {
+              "id": "48f482b3-e250-4c40-b443-1b2c0dc195b6",
+              "name": "requestedAt",
+              "value": "={{$now}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2256,
+        1456
+      ],
+      "id": "9b6c399e-39c5-47dd-b703-d44007adf385",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8010524f-6b05-4a8c-b9dd-b86fcda14ca7",
+              "name": "name",
+              "value": "={{ $('Save Meeting Request').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "a4e3beaf-475f-4ea1-b7ba-5bce6a90215a",
+              "name": "email",
+              "value": "={{ $('Save Meeting Request').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "de8c1cb5-4575-4297-bca5-37c2c06e491a",
+              "name": "date",
+              "value": "={{ $('Save Meeting Request').item.json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "beba5df5-e410-4ad6-acd1-166041d8a1f4",
+              "name": "duration",
+              "value": "={{ $('Save Meeting Request').item.json.duration }}",
+              "type": "number"
+            },
+            {
+              "id": "ac30a6ba-e5c5-4548-9397-7ce6566ecc03",
+              "name": "reason",
+              "value": "={{ $('Save Meeting Request').item.json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "69a691b5-e2e2-48e4-81a9-46050b787a06",
+              "name": "meetingType",
+              "value": "={{ $('Save Meeting Request').item.json.meetingType }}",
+              "type": "string"
+            },
+            {
+              "id": "142eeccc-1b09-450a-a81c-d228a9bbf71d",
+              "name": "status",
+              "value": "=APPROVED",
+              "type": "string"
+            },
+            {
+              "id": "39050a60-cf0a-4bf5-92d8-53092a064d89",
+              "name": "requestedAt",
+              "value": "={{ $now }}",
+              "type": "string"
+            },
+            {
+              "id": "91c0f15c-dfb3-44ca-afda-a1dfe261968f",
+              "name": "userId",
+              "value": "={{ $('Save Meeting Request').item.json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "2b74a564-592d-4ca8-b136-132b13d132bd",
+              "name": "_id",
+              "value": "={{ $('Save Meeting Request').item.json._id }}",
+              "type": "string"
+            },
+            {
+              "id": "25d72acc-be93-4355-87c6-30f828b48adf",
+              "name": "id",
+              "value": "={{ $('Save Meeting Request').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "b8276ac7-ff18-4151-8b3f-879274c4e391",
+              "name": "calendarEventId",
+              "value": "={{ $('Create Calendar Event').item.json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4352,
+        1344
+      ],
+      "id": "77e9c644-800f-4cc8-9c32-607f39b7618b",
+      "name": "Set Fields (Approval)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e9fed682-cecc-4629-88d7-00fad0fea34b",
+              "name": "name",
+              "value": "={{ $('Save Meeting Request').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "e3c48fe5-af73-4650-bb89-ca1787e65e3d",
+              "name": "email",
+              "value": "={{ $('Save Meeting Request').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "728d34a8-778b-4b98-b038-213404bd6961",
+              "name": "date",
+              "value": "={{ $('Save Meeting Request').item.json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "84134137-0327-4639-b4a6-fd4ef6532224",
+              "name": "duration",
+              "value": "={{ $('Save Meeting Request').item.json.duration }}",
+              "type": "string"
+            },
+            {
+              "id": "e29c3afb-16c2-4dc4-8132-a79a351b4aa5",
+              "name": "reason",
+              "value": "={{ $('Save Meeting Request').item.json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "72254a52-3ac0-4a1d-a51c-eb1899d5037f",
+              "name": "meetingType",
+              "value": "={{ $('Save Meeting Request').item.json.meetingType }}",
+              "type": "string"
+            },
+            {
+              "id": "a7e6d534-9aaf-4975-8e5b-7460c9c33e68",
+              "name": "status",
+              "value": "=REJECTED",
+              "type": "string"
+            },
+            {
+              "id": "96df2080-9d64-47d9-bfab-8e5b30100c37",
+              "name": "requestedAt",
+              "value": "={{ $now }}",
+              "type": "string"
+            },
+            {
+              "id": "65278908-5752-4f77-90ed-50f123e263d5",
+              "name": "userId",
+              "value": "={{ $('Save Meeting Request').item.json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "d1dd6671-268d-423c-a995-e0d38c9d3195",
+              "name": "_id",
+              "value": "={{ $('Save Meeting Request').item.json._id }}",
+              "type": "string"
+            },
+            {
+              "id": "76cae8c9-48ef-446e-858e-b54a697e66e6",
+              "name": "id",
+              "value": "={{ $('Save Meeting Request').item.json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4352,
+        1584
+      ],
+      "id": "a9448650-d639-4528-8c55-cb853dc04099",
+      "name": "Set Fields (Rejection)"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "analyticsData",
+        "include": "selectedOtherFields",
+        "fieldsToInclude": "timestamp, timezone",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        3808,
+        704
+      ],
+      "id": "922de067-35f5-440c-bb0a-827d97826fd6",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all the results from Generate Analytics\nconst results = $input.all();\n\n// Group results by period (we need to get period info from the split node)\nconst processedResults = [];\n\n// Process results in chunks of status groups (every 3-4 items represent one period)\n// Since we have 4 periods and varying status counts, we need to reconstruct this properly\n\n// For now, let's aggregate all results into a comprehensive summary\nconst statusMetrics = {};\nlet totalMeetings = 0;\nlet totalDuration = 0;\nconst uniqueUsers = new Set();\nconst meetingTypes = new Set();\n\n// Initialize default statuses\n['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].forEach(status => {\n  statusMetrics[status] = {\n    count: 0,\n    avgDuration: 0,\n    totalDuration: 0\n  };\n});\n\n// Process all results\nresults.forEach(result => {\n  const item = result.json;\n  const status = item.status || item._id;\n  \n  // Aggregate by status\n  if (!statusMetrics[status]) {\n    statusMetrics[status] = { count: 0, avgDuration: 0, totalDuration: 0 };\n  }\n  \n  statusMetrics[status].count += item.count || 0;\n  statusMetrics[status].totalDuration += item.totalDuration || 0;\n  totalMeetings += item.count || 0;\n  totalDuration += item.totalDuration || 0;\n  \n  // Collect unique users and meeting types\n  if (item.uniqueUsers) {\n    item.uniqueUsers.forEach(user => uniqueUsers.add(user));\n  }\n  if (item.meetingTypes) {\n    item.meetingTypes.forEach(type => meetingTypes.add(type));\n  }\n});\n\n// Calculate average durations\nObject.keys(statusMetrics).forEach(status => {\n  if (statusMetrics[status].count > 0) {\n    statusMetrics[status].avgDuration = Math.round((statusMetrics[status].totalDuration / statusMetrics[status].count) * 100) / 100;\n  }\n});\n\n// Calculate overall metrics\nconst approvalRate = totalMeetings > 0 ? \n  Math.round((statusMetrics.APPROVED.count / totalMeetings) * 100) : 0;\n\nconst rejectionRate = totalMeetings > 0 ? \n  Math.round((statusMetrics.REJECTED.count / totalMeetings) * 100) : 0;\n\nconst avgMeetingDuration = totalMeetings > 0 ? \n  Math.round((totalDuration / totalMeetings) * 100) / 100 : 0;\n\nreturn [{\n  period: 'consolidated', // All periods combined for now\n  timestamp: new Date().toISOString(),\n  timezone: 'Asia/Kolkata',\n  metrics: {\n    summary: {\n      totalMeetings: totalMeetings,\n      totalDuration: totalDuration,\n      avgMeetingDuration: avgMeetingDuration,\n      uniqueUsers: uniqueUsers.size,\n      meetingTypes: Array.from(meetingTypes),\n      approvalRate: approvalRate,\n      rejectionRate: rejectionRate\n    },\n    byStatus: statusMetrics,\n    rawData: results.length // For debugging\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4224,
+        704
+      ],
+      "id": "2b2d3773-a2ac-4c74-ae88-94ef6440f263",
+      "name": "Process Analytics"
+    },
+    {
+      "parameters": {
+        "content": "## AI RAG agent to ask general queries",
+        "height": 432,
+        "width": 592,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1056,
+        256
+      ],
+      "typeVersion": 1,
+      "id": "2c7de094-e48e-4dac-8e95-731101d42e9d",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1776,
+        608
+      ],
+      "id": "0497518c-4e3b-43bf-b479-0fcb36d8bc2e",
+      "name": "Embedding Model (3072)",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Input Validation, Global Config Manager and  Intent Classification",
+        "height": 304,
+        "width": 864,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        176,
+        880
+      ],
+      "typeVersion": 1,
+      "id": "98e2557e-9a87-4c95-9b81-230853579ba4",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "text": "=User Query: {{ $json.chatInput }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"name\": {\n      \"type\": [\"string\", \"null\"],\n      \"description\": \"Person's name\"\n    },\n    \"email\": {\n      \"type\": [\"string\", \"null\"],\n      \"format\": \"email\",\n      \"description\": \"Email address\"\n    },\n    \"date\": {\n      \"type\": [\"string\", \"null\"],\n      \"format\": \"date-time\",\n      \"description\": \"Meeting date and/or time\"\n    },\n    \"duration\": {\n      \"type\": [\"number\", \"null\"],\n      \"description\": \"Meeting duration in hours\"\n    },\n    \"reason\": {\n      \"type\": [\"string\", \"null\"],\n      \"description\": \"Reason for the meeting\"\n    },\n    \"meetingType\": {\n      \"type\": [\"string\", \"null\"],\n      \"enum\": [\"consultation\", \"interview\", \"demo\", \"discussion\", \"other\"],\n      \"description\": \"Type of meeting\"\n    }\n  },\n  \"required\": [\"name\", \"email\", \"date\", \"reason\", \"duration\", \"meetingType\"]\n}\n",
+        "options": {
+          "systemPromptTemplate": "=You are an expert extraction algorithm.  \nOnly extract relevant information from the text.  \nIf you do not know the value of an attribute asked to extract, you may omit the attribute's value.  \n\nExtract meeting details from the user query. Return a JSON object with these fields:  \n- **name**: name of the person who wants to schedule the meeting (the requester's name, null if not provided)  \n- **email**: email address of the person requesting the meeting (null if not provided)  \n- **date**: meeting datetime in ISO format with timezone like `\"2025-08-17T11:00:00+05:30\"` (null if not provided)  \n- **reason**: reason for meeting. format this using AI (null if not provided)  \n- **duration**: duration of meeting in hours (convert min, secs, etc. to hours format) (null if not provided)  \n- **meetingType**: type of meeting - consultation, interview, demo, discussion, or other  \n\n**Important**: Nishant Kumar Singh is the person **with whom** the meeting is being requested, **not** the person requesting the meeting. Extract the name of the person who is **asking** for the meeting with Nishant Kumar Singh.  \n\n**Query**: {{ $json.chatInput }}  \n**Current date and time**: {{ $now }}  \n\n**Note**: Return **only valid JSON** and nothing else, without any syntax error, and **do not** use code blocks or Markdown formatting and also **do not add** ```json in the output otherwise it will not be parsed."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1216,
+        1360
+      ],
+      "id": "099929a1-df83-4b04-8d8a-1216d39c0e54",
+      "name": "Enhanced Information Extractor"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-lite-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        1072
+      ],
+      "id": "ef62a4d7-ae7a-49dc-8002-c9192e846d81",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "message": "={{ $json.output }}",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        1632,
+        864
+      ],
+      "id": "d97a8fa5-452e-4ba8-a499-d9cccba2934e",
+      "name": "Respond to Greeting Chat"
+    },
+    {
+      "parameters": {
+        "databaseName": "portfolio_db",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryMongoDbChat",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        1072
+      ],
+      "id": "a0c51a06-6373-47ae-a803-2888a0a53c6b",
+      "name": "MongoDB Chat Memory",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a helpful assistant and your role is to sweetly reply to user's greetings and other messages."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1264,
+        864
+      ],
+      "id": "79251481-d5c4-4162-b8b2-c41206b45618",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "\"You are Nishant Kumar Singh's AI assistant. Your role is to provide helpful and accurate information about Nishant's background, skills, projects, and experience based on the portfolio knowledge database.\\\\n\\\\nGuidelines:\\\\n- Use the portfolio information to answer questions about Nishant's work, skills, and experience\\\\n- Be professional yet approachable\\\\n- If you don't have specific information, be honest about it\\\\n- Encourage users to schedule a meeting if they need more detailed discussions\\\\n- Always maintain a helpful and informative tone."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1184,
+        320
+      ],
+      "id": "3b424702-8475-41a5-aded-12d800761dd5",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "text": "=User Query: {{ $json.chatInput }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"email\": {\n      \"type\": [\"string\", \"null\"],\n      \"format\": \"email\",\n      \"description\": \"Email address of person who scheduled the meeting\"\n    },\n    \"meetingDate\": {\n      \"type\": [\"string\", \"null\"],\n      \"format\": \"date-time\",\n      \"description\": \"Date and time of meeting to cancel\"\n    },\n    \"reason\": {\n      \"type\": [\"string\", \"null\"],\n      \"description\": \"Reason for cancellation\"\n    }\n  },\n  \"required\": [\"email\", \"meetingDate\"]\n}",
+        "options": {
+          "systemPromptTemplate": "=You are an expert extraction algorithm specialized in meeting cancellation requests.\n\nOnly extract relevant information from the text. If you do not know the value of an attribute asked to extract, you may omit the attribute's value.\n\nExtract meeting cancellation details from the user query. Return a JSON object with these fields:\n- **email**: Email address of the person who originally scheduled the meeting (the requester's email, null if not provided)\n- **meetingDate**: Date and time of the meeting to be cancelled in ISO format with Asia/Kolkata timezone like \"2025-08-17T11:00:00+05:30\" (null if not provided)\n- **reason**: Reason for cancelling the meeting (null if not provided)\n\n**Important Guidelines:**\n- Extract the email of the person WHO SCHEDULED the meeting (not Nishant's email)\n- For meetingDate, look for specific dates/times mentioned for the meeting to cancel.\n- If multiple meetings are mentioned, extract the one they want to cancel\n- The reason should be the explanation for why they're cancelling\n- Current date and time: {{ $now }}\n\n**Query**: {{ $json.chatInput }}\n\n**Note**: Return **only valid JSON** and nothing else, without any syntax error, and **do not** use code blocks or Markdown formatting and also **do not add** ```json in the output otherwise it will not be parsed."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        2080
+      ],
+      "id": "6b3765f8-d6dc-434b-ba24-25ce12c6b5f6",
+      "name": "Information Extractor"
+    },
+    {
+      "parameters": {
+        "message": "=❌ I need some additional information to cancel your meeting.\n\n{{ $json.friendlyMessages.missingInfo || 'I need more details about which meeting you want to cancel.' }}\n\n**Please provide:**\n{{ $json.missing.length > 0 ? $json.missing.map(item => `• Your ${item}`).join('\\n') : '• Email address used to book the meeting\\\\n• Date and time of the meeting to cancel' }}\n\n**Example format:**\n\"I want to cancel my meeting scheduled for August 20th at 2 PM. My email is john@example.com. Something urgent came up.\"\n\nOnce you provide the missing information, I'll help you cancel the meeting right away! 😊",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        2272
+      ],
+      "id": "b18e4cbe-c6d8-40f5-8964-7543ba814fee",
+      "name": "Request for Missing Information"
+    },
+    {
+      "parameters": {
+        "message": "=⚠️ I found some issues with your cancellation request that need to be addressed.\n\n**Issues found:**\n{{ $json.errors.map(error => `• ${error}`).join('\\n') }}\n\n{{ $json.warnings.length > 0 ? '\\n**Please note:**\\n' + $json.warnings.map(warning => `⚡ ${warning}`).join('\\\\n') : '' }}\n\n\n**What you can do:**\n{{ $json.errors.some(e => e.includes('advance notice')) ? '• For urgent cancellations, please contact directly' : '' }}\n{{ $json.errors.some(e => e.includes('email format')) ? '• Please provide a valid email address' : '' }}\n{{ $json.errors.some(e => e.includes('Invalid date')) ? '• Please specify the date in a clear format (e.g., \"August 20th at 2 PM\")' : '' }}\n{{ $json.errors.some(e => e.includes('already occurred')) ? '• For questions about past meetings, please reach out directly' : '' }}\n\nPlease correct the issues above and try again, or let me know if you need help with anything else! 🤝",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        2464
+      ],
+      "id": "cfdab55e-4935-4f42-b0a4-44ea7b0fb922",
+      "name": "Request for Valid Data"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1248,
+        2320
+      ],
+      "id": "579ad0e8-3921-48af-a139-1d9d77a96718",
+      "name": "Extraction LLM 2.5 Flash",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        1536
+      ],
+      "id": "5ce8a522-4f39-4ff5-aec2-3a2f29569a9b",
+      "name": "Extraction LLM 2.0 Flash",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "collection": "meeting_requests",
+        "options": {
+          "sort": "{ \"date\": 1 }"
+        },
+        "query": "={\n  \"$and\": [\n    {\n      \"email\": \"{{ $json.email }}\"\n    },\n    {\n      \"$or\": [\n        {\n          \"date\": \"{{ $json.meetingDate }}\"\n        },\n        {\n          \"date\": {\n            \"$gte\": \"{{ $json.searchCriteria.dateRange.start }}\",\n            \"$lte\": \"{{ $json.searchCriteria.dateRange.end }}\"\n          }\n        }\n      ]\n    },\n    {\n      \"status\": {\n        \"$in\": [\"APPROVED\", \"PENDING\"]\n      }\n    },\n    {\n      \"date\": {\n        \"$gte\": \"{{ new Date().toISOString() }}\"\n      }\n    }\n  ]\n}"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        2368,
+        2320
+      ],
+      "id": "d33dadcb-9fdc-4770-9a20-692e0c94c886",
+      "name": "Find documents",
+      "alwaysOutputData": true,
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b09de298-3810-4ad0-a1ae-f5555776af8a",
+                    "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Multiple Meetings Found"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $input.all().filter(item => Object.keys(item.json).length > 0).length }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    },
+                    "id": "22dcb21a-af68-4017-98ff-ed1fac018aef"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Meeting Found"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "6e8913cd-ae0d-4b57-8801-2329496daf84",
+                    "leftValue": "={{ Object.keys($json).length }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No Meeting Found"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2592,
+        2304
+      ],
+      "id": "8d21171b-23d8-41be-b583-395d54f988c7",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "message": "=❌ I couldn't find any meeting matching your details.\n\n**What I searched for:**\n📧 **Email**: {{ $('Cancel Meeting Validator').item.json.email }}\n📅 **Date**: {{ new Date($('Cancel Meeting Validator').item.json.meetingDate).toLocaleString('en-IN', { \n  timeZone: 'Asia/Kolkata',\n  dateStyle: 'full',\n  timeStyle: 'short'\n}) }}\n\n**Possible reasons:**\n- Meeting might already be cancelled\n- Different email address was used for booking  \n- Meeting date/time might be slightly different\n- Meeting hasn't been approved yet\n- Meeting might be in the past\n\n**What you can do:**\n✅ Double-check the email address and date\n✅ Try: \"Show all my upcoming meetings\"\n✅ Contact directly for urgent assistance\n",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        2992,
+        2544
+      ],
+      "id": "9862589a-539e-4a5a-a0ed-e42b558c5d15",
+      "name": "Respond to Chat1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json.output;\nconst config = $('Configuration Manager').first().json.config;\nconst missing = [];\nconst errors = [];\nconst warnings = [];\n\nconsole.log(\"Cancel meeting validation input:\", response);\nconsole.log(\"Configuration:\", config);\n\n// Basic field validation\nif (!response.email) missing.push('email address of the person who scheduled the meeting');\nif (!response.meetingDate) missing.push('date and time of the meeting to cancel');\n\n// Email format validation\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (response.email && !emailRegex.test(response.email)) {\n  errors.push('Invalid email format provided');\n}\n\n// Date and time validation\nlet meetingDate = null;\nif (response.meetingDate) {\n  meetingDate = new Date(response.meetingDate);\n  const now = new Date();\n  \n  // Check if date is valid\n  if (isNaN(meetingDate.getTime())) {\n    errors.push('Invalid date format provided');\n  } else {\n    // Check if meeting is in the past\n    if (meetingDate <= now) {\n      errors.push('Cannot cancel meetings that have already occurred');\n    }\n    \n    // Convert meeting date to IST for business hours validation (if needed)\n    const istOffset = 5.5 * 60; // IST is UTC+5:30\n    const meetingDateIST = new Date(meetingDate.getTime() + (istOffset * 60 * 1000));\n    const dayOfWeek = meetingDateIST.getUTCDay();\n    \n    console.log(\"Meeting date in IST:\", meetingDateIST.toISOString());\n    console.log(\"Day of week:\", dayOfWeek);\n  }\n}\n\n// Additional business logic validation\nconst businessValidation = {\n  hasValidEmail: response.email && emailRegex.test(response.email),\n  hasValidDate: meetingDate && !isNaN(meetingDate.getTime()),\n  isInFuture: meetingDate && meetingDate > new Date(),\n};\n\nconsole.log(\"Business validation results:\", businessValidation);\n\n// Determine validation status\nconst isComplete = missing.length === 0;\nconst isValid = errors.length === 0;\nconst validationStatus = isComplete && isValid ? 'VALID' : \n                        isComplete ? 'INVALID_DATA' : 'INCOMPLETE_DATA';\n\n// Prepare search criteria for database lookup\nconst searchCriteria = {\n  email: response.email,\n  date: response.meetingDate,\n  dateRange: null\n};\n\n// If exact date matching fails, we might want to search by date range\nif (meetingDate && isValid) {\n  const startOfDay = new Date(meetingDate);\n  startOfDay.setHours(0, 0, 0, 0);\n  const endOfDay = new Date(meetingDate);\n  endOfDay.setHours(23, 59, 59, 999);\n  \n  searchCriteria.dateRange = {\n    start: startOfDay.toISOString(),\n    end: endOfDay.toISOString()\n  };\n}\n\n// Generate user-friendly error messages\nconst friendlyMessages = {\n  missingInfo: missing.length > 0 ? `I need the following information to cancel your meeting: ${missing.join(', ')}.` : null,\n  validationErrors: errors.length > 0 ? `There are some issues with your cancellation request: ${errors.join(' ')}` : null,\n  warnings: warnings.length > 0 ? warnings.join(' ') : null\n};\n\nconsole.log(\"Validation completed with status:\", validationStatus);\n\nreturn {\n  // Original extracted data\n  email: response.email,\n  meetingDate: response.meetingDate,\n  reason: response.reason || 'No reason provided',\n  \n  // Validation results\n  missing: missing,\n  errors: errors,\n  warnings: warnings,\n  isComplete: isComplete,\n  isValid: isValid,\n  validationStatus: validationStatus,\n  \n  // Processed data\n  meetingDateObject: meetingDate,\n  searchCriteria: searchCriteria,\n  businessValidation: businessValidation,\n  \n  // User-friendly messages\n  friendlyMessages: friendlyMessages,\n  \n  // Additional metadata\n  timestamp: new Date().toISOString(),\n  hoursUntilMeeting: meetingDate ? Math.round(((meetingDate.getTime() - new Date().getTime()) / (1000 * 60 * 60)) * 10) / 10 : null\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        2080
+      ],
+      "id": "aea2144f-9aa0-4f5c-9bc5-e1c1c9dab169",
+      "name": "Cancel Meeting Validator"
+    },
+    {
+      "parameters": {
+        "message": "={{ $json.message }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        3216,
+        2096
+      ],
+      "id": "e5f5e420-a93c-406e-b73a-aee1a27cbcbd",
+      "name": "Respond to Chat for Multiple Meetings"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "nishant220902@gmail.com",
+          "mode": "list",
+          "cachedResultName": "nishant220902@gmail.com"
+        },
+        "eventId": "={{ $json.calendarEventId }}",
+        "options": {
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        3184,
+        2352
+      ],
+      "id": "f2d799fa-dc9c-4e68-9c85-d64d4d6f15f3",
+      "name": "Delete an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ZSq7tiI2FhFjDxCz",
+          "name": "Google Calendar account (nishant220902@gmail.com)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "1528112308",
+        "text": "=🚫 MEETING CANCELLATION\n\n👤 **Cancelled by:** {{ $('Set Data Fields').item.json.name }}\n📧 **Email:** {{ $('Set Data Fields').item.json.email }}\n📅 **Meeting Date:** {{ new Date($('Set Data Fields').item.json.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' }) }}\n⏱️ **Duration:** {{ (() => {\n  const d = $('Set Data Fields').item.json.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}\n💭 **Original Reason:** {{ $('Set Data Fields').item.json.reason }}\n🏷️ **Meeting Type:** {{ $('Set Data Fields').item.json.meetingType || 'General' }}\n📝 **Cancellation Reason:** {{ $('Cancel Event Validation Router').item.json.reason }}\n⏰ **Cancelled At:** {{ new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' }) }}\n\n✅ Calendar event has been automatically removed.\n📧 Confirmation email sent to the participant.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        2352
+      ],
+      "id": "f39d834a-1cb9-46d6-b22f-ee2e3e19035d",
+      "name": "Event Cancellation Text",
+      "webhookId": "7a97c04b-a30f-45ea-a64b-1de9b9049daf",
+      "credentials": {
+        "telegramApi": {
+          "id": "9z6KmVdwwJBt6s8T",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "message": "=✅ **Meeting Successfully Cancelled!**\n\nYour meeting has been cancelled and all relevant parties have been notified.\n\n📋 **Cancellation Summary:**\n  - **Date & Time:** {{ new Date($('Set Data Fields').item.json.date).toLocaleString('en-IN', { \n  timeZone: 'Asia/Kolkata',\n  day: '2-digit',\n  month: 'long',\n  year: 'numeric',\n  hour: 'numeric',\n  minute: '2-digit',\n  hour12: true\n}) }}\n- **Duration:** {{ (() => {\n  const d = $('Set Data Fields').item.json.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}\n- **Purpose:** {{ $('Set Data Fields').item.json.reason }}\n- **Cancellation Reason:** {{ $('Cancel Event Validation Router').item.json.reason }}\n\n🎯 **What's Been Done:**\n✓ Calendar event removed from schedule\n✓ Admin notified about the cancellation\n✓ Confirmation email sent to your address\n✓ Meeting status updated in our system\n\nThank you for letting us know in advance! 🙏",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        3808,
+        2352
+      ],
+      "id": "538725ca-8097-497a-999e-55a318ae4600",
+      "name": "Respond to Chat for Event Cancellation"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        4448,
+        2352
+      ],
+      "id": "ab36dc22-53ad-46a2-aae9-6936d70eb58b",
+      "name": "No Operation, do nothing2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "142eeccc-1b09-450a-a81c-d228a9bbf71d",
+              "name": "status",
+              "value": "=CANCELLED",
+              "type": "string"
+            },
+            {
+              "id": "39050a60-cf0a-4bf5-92d8-53092a064d89",
+              "name": "requestedAt",
+              "value": "={{ $now }}",
+              "type": "string"
+            },
+            {
+              "id": "2b74a564-592d-4ca8-b136-132b13d132bd",
+              "name": "_id",
+              "value": "={{ $('Set Data Fields').item.json._id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4032,
+        2352
+      ],
+      "id": "97ba9ed7-a91c-443b-8233-5b08ef9f6c3c",
+      "name": "Set Fields (Event Cancellation)"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "collection": "meeting_requests",
+        "updateKey": "_id",
+        "fields": "status, requestedAt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.1,
+      "position": [
+        4240,
+        2352
+      ],
+      "id": "7788a7aa-1d0b-407b-ba8b-2febf0f25d04",
+      "name": "Update Meeting Status (Event Cancel)",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        3408,
+        1840
+      ],
+      "id": "f98bfc02-8804-41d9-9189-6b0b40b41e61",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('Switch').all()[parseInt($input.first().json.output) - 1]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        2096
+      ],
+      "id": "2a4f0d78-37fe-4902-9b75-2dd3b7300bf7",
+      "name": "Correct Meeting Extractor"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "VALID",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "dd16f7fe-78d6-4dd2-bde4-6ed4ee4e2fd4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Valid Data"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "INCOMPLETE_DATA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "eac1cc81-02f5-4fd7-9e94-6bc9e8ea532c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Missing Data"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.validationStatus }}",
+                    "rightValue": "INVALID_DATA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "15f71055-345e-4841-8485-9c5f96397234"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid Data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1808,
+        2064
+      ],
+      "id": "2ca16069-9f57-4f81-9da8-bd74bf14a5ed",
+      "name": "Cancel Event Validation Router"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Set Data Fields').item.json.email }}",
+        "subject": "=Cancel Event Confirmation -  {{ $('Set Data Fields').item.json.reason }}",
+        "message": "=<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Meeting Cancellation Confirmation</title>\n    <style>\n        body {\n            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n            line-height: 1.6;\n            color: #333;\n            margin: 0;\n            padding: 20px;\n            background-color: #f5f5f5;\n        }\n        .container {\n            max-width: 600px;\n            margin: 0 auto;\n            background-color: #ffffff;\n            border-radius: 8px;\n            box-shadow: 0 2px 10px rgba(0,0,0,0.1);\n            overflow: hidden;\n        }\n        .header {\n            background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);\n            color: white;\n            padding: 30px 20px;\n            text-align: center;\n        }\n        .header h1 {\n            margin: 0;\n            font-size: 24px;\n            font-weight: 600;\n        }\n        .content {\n            padding: 30px 20px;\n        }\n        .meeting-details {\n            background-color: #fff5f5;\n            border-left: 4px solid #ff6b35;\n            padding: 20px;\n            margin: 20px 0;\n            border-radius: 0 6px 6px 0;\n        }\n        .meeting-details h3 {\n            margin: 0 0 15px 0;\n            color: #d63031;\n            font-size: 18px;\n        }\n        .detail-row {\n            display: flex;\n            margin-bottom: 12px;\n            align-items: flex-start;\n        }\n        .detail-label {\n            font-weight: 600;\n            min-width: 100px;\n            color: #555;\n        }\n        .detail-value {\n            flex: 1;\n            color: #333;\n        }\n        .next-steps {\n            background-color: #f8f9fa;\n            border-radius: 6px;\n            padding: 20px;\n            margin: 20px 0;\n        }\n        .next-steps h4 {\n            margin: 0 0 15px 0;\n            color: #2d3436;\n            display: flex;\n            align-items: center;\n        }\n        .next-steps ul {\n            margin: 0;\n            padding-left: 20px;\n        }\n        .next-steps li {\n            margin-bottom: 8px;\n            color: #555;\n        }\n        .reschedule-cta {\n            background: linear-gradient(135deg, #0984e3 0%, #74b9ff 100%);\n            color: white;\n            padding: 15px 25px;\n            text-decoration: none;\n            border-radius: 6px;\n            display: inline-block;\n            font-weight: 600;\n            margin: 20px 0;\n            transition: transform 0.2s ease;\n        }\n        .reschedule-cta:hover {\n            transform: translateY(-2px);\n            color: white;\n            text-decoration: none;\n        }\n        .footer {\n            margin-top: 30px;\n            padding-top: 20px;\n            border-top: 1px solid #e9ecef;\n            color: #6c757d;\n            font-size: 14px;\n        }\n        .signature {\n            margin-top: 25px;\n        }\n        .emoji {\n            font-size: 18px;\n            margin-right: 8px;\n        }\n        @media (max-width: 600px) {\n            body {\n                padding: 10px;\n            }\n            .content {\n                padding: 20px 15px;\n            }\n            .detail-row {\n                flex-direction: column;\n            }\n            .detail-label {\n                margin-bottom: 4px;\n            }\n        }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <!-- Header -->\n        <div class=\"header\">\n            <h1>🗑️ Meeting Cancelled</h1>\n        </div>\n        \n        <!-- Main Content -->\n        <div class=\"content\">\n            <p>Dear <strong>{{ $('Set Data Fields').item.json.name }}</strong>,</p>\n            \n            <p>Your meeting cancellation request has been <strong>approved and processed</strong>. The meeting has been successfully cancelled and removed from the calendar.</p>\n            \n            <!-- Cancelled Meeting Details -->\n            <div class=\"meeting-details\">\n                <h3>📅 Cancelled Meeting Details</h3>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">📅</span>Date & Time:</div>\n                    <div class=\"detail-value\">\n                        {{ new Date($('Set Data Fields').item.json.date).toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    weekday: 'long',\n    day: '2-digit',\n    month: 'long',\n    year: 'numeric',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n}) }}\n                    </div>\n                </div>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">⏱️</span>Duration:</div>\n                    <div class=\"detail-value\">\n                        {{ (() => {\n    const d = $('Set Data Fields').item.json.duration;\n    const totalMinutes = Math.round(d * 60);\n    const h = Math.floor(totalMinutes / 60);\n    const m = totalMinutes % 60;\n    return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n           (h > 0 && m > 0 ? \" \" : \"\") +\n           (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n           \"0 minutes\";\n})() }}\n                    </div>\n                </div>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">📝</span>Purpose:</div>\n                    <div class=\"detail-value\">{{ $('Set Data Fields').item.json.reason }}</div>\n                </div>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">🏷️</span>Meeting Type:</div>\n                    <div class=\"detail-value\">{{ $('Set Data Fields').item.json.meetingType || 'General' }}</div>\n                </div>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">💭</span>Cancellation Reason:</div>\n                    <div class=\"detail-value\">{{ $('Cancel Event Validation Router').item.json.reason || 'No Reason Specified' }}</div>\n                </div>\n                \n                <div class=\"detail-row\">\n                    <div class=\"detail-label\"><span class=\"emoji\">🕐</span>Cancelled On:</div>\n                    <div class=\"detail-value\">\n                        {{ new Date().toLocaleString('en-IN', { \n                            timeZone: 'Asia/Kolkata',\n                            dateStyle: 'full',\n                            timeStyle: 'short'\n                        }) }}\n                    </div>\n                </div>\n            </div>\n            \n            <!-- What Happens Next -->\n            <div class=\"next-steps\">\n                <h4><span class=\"emoji\">✅</span>What's Been Done:</h4>\n                <ul>\n                    <li><strong>Calendar event deleted</strong> - The meeting has been removed from both calendars</li>\n                    <li><strong>Automatic notifications sent</strong> - All attendees have been notified of the cancellation</li>\n                    <li><strong>Time slot freed up</strong> - This time is now available for other bookings</li>\n                    <li><strong>No further action required</strong> - The cancellation is complete</li>\n                </ul>\n            </div>\n            \n            \n            <p>If this cancellation was made in error or if you have any questions, please don't hesitate to reach out immediately.</p>\n            \n            <p>Thank you for letting us know in advance. We appreciate your consideration and look forward to connecting with you in the future!</p>\n            \n            <!-- Footer -->\n            <div class=\"footer\">\n                <div class=\"signature\">\n                    <p><strong>Best regards,</strong><br>\n                    <strong>Nishant's AI Assistant</strong></p>\n                </div>\n                \n                <p style=\"font-size: 12px; color: #999; margin-top: 20px;\">\n                    This is an automated confirmation email. If you didn't request this cancellation, please contact us immediately.\n                </p>\n            </div>\n        </div>\n    </div>\n</body>\n</html>",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Nishant Kumar Singh"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3392,
+        2352
+      ],
+      "id": "ef9a4367-d29c-43ef-ab5f-00220f73148d",
+      "name": "Send Event Cancellation Mail",
+      "webhookId": "ab22365e-443c-45a6-89f1-a1634fd6e4aa",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eneTmljaozs8QFMg",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "74d1b815-988b-465d-9908-3d8dbc91bba8",
+              "name": "name",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.name : $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "9884f63b-ed57-4236-a50a-26be0a41ba42",
+              "name": "email",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.email : $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "6593ba40-5f8a-4dad-a9fc-f2338d1e056f",
+              "name": "date",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.date : $json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "19e689a1-d46a-4422-838b-05b0d2a6d6fb",
+              "name": "duration",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.duration : $json.duration }}",
+              "type": "number"
+            },
+            {
+              "id": "3b7b02a9-e50a-44e6-89e5-d22da6239fda",
+              "name": "reason",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.reason : $json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "f4fc8344-ce4a-460c-8c92-4057111accf8",
+              "name": "meetingType",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.meetingType : $json.meetingType }}",
+              "type": "string"
+            },
+            {
+              "id": "fa0955c4-61cd-4b75-9646-aea5fc5367d2",
+              "name": "status",
+              "value": "=CANCELLED",
+              "type": "string"
+            },
+            {
+              "id": "3fe9b076-0552-4895-9492-ec0a6f18461f",
+              "name": "userId",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.userId : $json.userId }}",
+              "type": "string"
+            },
+            {
+              "id": "de148a7b-cc4e-4979-ad3d-d5791eb5bd15",
+              "name": "calendarEventId",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json.calendarEventId : $json.calendarEventId }}",
+              "type": "string"
+            },
+            {
+              "id": "dc648eb7-8715-4b81-aec6-3de7806036f8",
+              "name": "_id",
+              "value": "={{ $('Correct Meeting Extractor').length > 0 ? $('Correct Meeting Extractor').first().json._id : $json._id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2976,
+        2352
+      ],
+      "id": "200de157-e473-4f6c-ae2a-9f0e37ec0ea7",
+      "name": "Set Data Fields"
+    },
+    {
+      "parameters": {
+        "content": "## Data Validation for Meeting Cancel",
+        "height": 688,
+        "width": 1104
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1104,
+        2016
+      ],
+      "typeVersion": 1,
+      "id": "62f28748-517c-4992-8f7b-2b6d3b956c71",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "### Correct meeting Extraction using AI Agent ",
+        "height": 224,
+        "width": 992,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2928,
+        2032
+      ],
+      "typeVersion": 1,
+      "id": "d19fa2ed-65d7-47b4-8d82-dfc50957bcd9",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meetings = $input.all();\nlet message = `🔍 I found ${meetings.length} meetings for your email address. Please specify which one you want to cancel:\\n\\n`;\n\nmeetings.forEach((item, idx) => {\n  const m = item.json;\n  const date = new Date(m.date).toLocaleString('en-IN', { \n    timeZone: 'Asia/Kolkata',\n    dateStyle: 'full',\n    timeStyle: 'short'\n  });\n  message += `**${idx + 1}. Meeting on ${date}**\\n- Purpose: ${m.reason}\\n- Duration: ${m.duration} hour${m.duration === 1 ? '' : 's'}\\n- Status: ${m.status}\\n- Type: ${m.meetingType}\\n\\n`;\n});\n\nmessage += `**To cancel a specific meeting, please say:**\\n• \"Cancel meeting number 1\" or\\n• \"Cancel the meeting on [specific date/time]\" or  \\n• \"Cancel my [meeting purpose] meeting\"\\n\\nWhich meeting would you like to cancel? 🤔`;\n\n// Return with proper pairedItem structure\nreturn meetings.map((item, index) => ({\n  json: { \n    message: message,\n    // Include original data to maintain context\n    ...item.json\n  },\n  pairedItem: item.pairedItem\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2992,
+        2096
+      ],
+      "id": "6f211668-6ad3-498c-b908-b9f531f4e627",
+      "name": "Meetings Lister"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=messsage shown to user: {{ $('Meetings Lister').item.json.message }}\nUser Answer:  {{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "=You are a routing assistant that selects exactly one meeting from a numbered list the user was shown earlier in {{ $('Meetings Lister').item.json.message }} . The user may reply with a number (e.g., “2”), an ordinal (“second”, “2nd”), a spelled-out number (“two”), a date/time reference (“Friday 3pm”, “Aug 20 2pm”), or a purpose label (“demo”, “interview”). Your task is to return ONLY the meeting index as a plain integer (e.g., 1, 2, 3). If you cannot determine a single unambiguous index, return the word UNKNOWN.\n\nContext you will receive:\n\nA compact list of meetings the user was shown, each with a number starting from 1, plus fields like date/time, purpose, type, and duration.\n\nThe user’s follow-up message indicating which meeting to cancel.\n\nInstructions:\n\nIf the user explicitly provides a number or ordinal/spelled-out number, map it to the corresponding index (first/1, second/2, third/3, fourth/4, fifth/5, etc.). Accept variants like “2nd”, “third”, “two”.\n\nIf the user references a date/time (“Friday at 3 pm”, “Aug 20 14:00”, “tomorrow 11 am IST”), match against the list and pick the single best match. Consider weekday, day, month, and time.\n\nIf the user references the meeting purpose or type (“cancel the interview”, “the demo one”), match that text against the corresponding field in the list.\n\nIf multiple candidates match, but one is clearly stronger (more matching tokens or exact time match), choose that index.\n\nIf multiple items still tie or the message is ambiguous, return UNKNOWN.\n\nOutput format MUST be ONLY:\n\nA single integer like 1 (no text, no JSON, no quotes), or\n\nUNKNOWN\n\nDo not output any explanations, reasoning, or additional text.\n\nNormalization and examples:\n\nNormalize user text: case-insensitive, handle “1st/2nd/3rd/4th…”, “one/two/three…”.\n\n“Cancel number three please” → 3\n\n“Cancel the 2nd” → 2\n\n“Cancel the Friday 3pm meeting” (if only one meeting is Friday 3pm) → that meeting’s index\n\n“Cancel the interview meeting” (if only one meeting has type/purpose = interview) → that index\n\nIf two meetings are both interviews on the same day and the user does not add time → UNKNOWN\n\nSafety:\n\nIf the user response does not correspond to any meeting or is unclear, return UNKNOWN."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        3408,
+        2096
+      ],
+      "id": "ed5fe466-4eea-4204-9744-bdecd14af266",
+      "name": "Meeting Matcher AI Agent"
+    },
+    {
+      "parameters": {
+        "content": "#### Routing based on the number of meetings found",
+        "height": 240,
+        "width": 272,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2544,
+        2240
+      ],
+      "typeVersion": 1,
+      "id": "b88bee8e-5775-4f2d-a9ba-e46bd03d7255",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "## Final Tools Workflow",
+        "height": 480,
+        "width": 1616,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3376,
+        1280
+      ],
+      "typeVersion": 1,
+      "id": "473787b7-47df-4ed2-a01e-c22d91ecf7d8",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "nishant220902@gmail.com",
+          "mode": "list"
+        },
+        "start": "={{ $('Enhanced Information Extractor').item.json.output.date }}",
+        "end": "={{ new Date(\n  new Date($('Enhanced Data Validator').item.json.date).getTime() +\n  ($('Enhanced Data Validator').item.json.duration * 60 * 60 * 1000)\n).toLocaleString(\"sv-SE\", { timeZone: \"Asia/Kolkata\" }).replace(\" \", \"T\") + \"+05:30\" }}",
+        "additionalFields": {
+          "allday": "no",
+          "attendees": [
+            "={{ $('Enhanced Information Extractor').item.json.output.email }}"
+          ],
+          "color": "10",
+          "description": "=Meeting Type: {{ $('Enhanced Information Extractor').item.json.output.meetingType || 'General' }}\nPurpose: {{ $('Enhanced Information Extractor').item.json.output.reason }}\nDuration: {{ (() => {\n  const d = $('Enhanced Information Extractor').item.json.output.duration;\n  const totalMinutes = Math.round(d * 60);\n  const h = Math.floor(totalMinutes / 60);\n  const m = totalMinutes % 60;\n  return (h > 0 ? h + \" hour\" + (h > 1 ? \"s\" : \"\") : \"\") +\n         (h > 0 && m > 0 ? \" \" : \"\") +\n         (m > 0 ? m + \" minute\" + (m > 1 ? \"s\" : \"\") : \"\") ||\n         \"0 minutes\";\n})() }}\nRequested by: {{ $('Enhanced Information Extractor').item.json.output.name }}",
+          "sendUpdates": "all",
+          "summary": "=Meeting with {{ $('Enhanced Information Extractor').item.json.output.name }} - {{ $('Enhanced Information Extractor').item.json.output.reason }}",
+          "visibility": "private"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [
+        3456,
+        1344
+      ],
+      "id": "393ef679-fa8b-4242-b278-540b37c6fb4b",
+      "name": "Create Calendar Event",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ZSq7tiI2FhFjDxCz",
+          "name": "Google Calendar account (nishant220902@gmail.com)"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "content": "## Final Tools Workflow",
+        "height": 240,
+        "width": 1712,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2928,
+        2288
+      ],
+      "typeVersion": 1,
+      "id": "a48c288b-26c1-408f-b728-d7a0ff378d4f",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "content": "#### Find Meetings Data",
+        "height": 176,
+        "width": 224,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2304,
+        2288
+      ],
+      "typeVersion": 1,
+      "id": "4008638f-b67e-493c-8c01-d52f63759118",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "### Editing and Saving meetings data",
+        "height": 192,
+        "width": 352,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2224,
+        1408
+      ],
+      "typeVersion": 1,
+      "id": "9edd3220-f0bb-494a-9f94-9767892c94d9",
+      "name": "Sticky Note10"
+    },
+    {
+      "parameters": {
+        "content": "## AI Agent for Greetings messages",
+        "height": 448,
+        "width": 592,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1184,
+        784
+      ],
+      "typeVersion": 1,
+      "id": "bd95ef36-d625-4a6f-8976-4cc646b43b9a",
+      "name": "Sticky Note11"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-lite-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        48
+      ],
+      "id": "a5f2e4f3-647c-4622-9791-50dbfc824cac",
+      "name": "Google Gemini Chat Model2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "oKbijaGW67hgVAZv",
+          "name": "FAQ"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "databaseName": "portfolio_db",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryMongoDbChat",
+      "typeVersion": 1,
+      "position": [
+        1264,
+        48
+      ],
+      "id": "ee8df26f-8706-4870-b3fc-28a4ee7d28bb",
+      "name": "MongoDB Chat Memory1",
+      "credentials": {
+        "mongoDb": {
+          "id": "xUtFKjlowNfgp6b3",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a helpful assistant.\nWhen the user makes a request, if it is a miscellaneous request that you cannot fulfill, you should politely deny it. Instead, explain clearly what you can do.\n\nYou can only:\n\n- Schedule meetings\n\n- Cancel meetings\n\n- Provide information about Nishant’s portfolio, including his experiences, skills, education history, and projects\n\nDo not provide any other type of response outside these areas. Always remain polite, concise, and professional."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        1136,
+        -160
+      ],
+      "id": "7d278147-e706-4203-badc-d9e6c0691e88",
+      "name": "AI Agent2"
+    },
+    {
+      "parameters": {
+        "content": "## AI Agent for Miscellaneous Requests",
+        "height": 448,
+        "width": 592,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1056,
+        -240
+      ],
+      "typeVersion": 1,
+      "id": "1c84bfec-d689-4d5b-a726-2e2ca5839543",
+      "name": "Sticky Note12"
+    },
+    {
+      "parameters": {
+        "message": "={{ $json.output }}",
+        "waitUserReply": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [
+        1504,
+        -160
+      ],
+      "id": "ffac4833-6272-439a-ab80-6bc845281502",
+      "name": "Respond to Miscellaneous Chat"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Security & Input Validation": {
+      "main": [
+        [
+          {
+            "node": "Configuration Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Intent Classifier": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enhanced Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "AI Agent2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Data Validator": {
+      "main": [
+        [
+          {
+            "node": "Validation Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Router": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request Missing Information",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Invalid Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Approval Pending": {
+      "main": [
+        [
+          {
+            "node": "Admin Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admin Approval Request": {
+      "main": [
+        [
+          {
+            "node": "Approval Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Router": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejection Reason Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "Approval Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Meeting Status (Approved)": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejection Reason Request": {
+      "main": [
+        [
+          {
+            "node": "Send Rejection Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Rejection Email": {
+      "main": [
+        [
+          {
+            "node": "Rejection Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Meeting Status (Rejected)": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Missing Information": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download Portfolio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Portfolio File": {
+      "main": [
+        [
+          {
+            "node": "Vector Store Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Vector Store Insert",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Document Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG LLM Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Portfolio Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classification LLM": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Enhanced Intent Classifier",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting Reminder Scheduler": {
+      "main": [
+        [
+          {
+            "node": "Find Upcoming Meetings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Upcoming Meetings": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analytics Scheduler": {
+      "main": [
+        [
+          {
+            "node": "Analytics Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analytics Processor": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Analytics": {
+      "main": [
+        [
+          {
+            "node": "Process Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Invalid Data": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Manager": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Intent Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Security & Input Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Meeting Rejected": {
+      "main": [
+        [
+          {
+            "node": "Set Fields (Rejection)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Meeting Approved": {
+      "main": [
+        [
+          {
+            "node": "Set Fields (Approval)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Meeting Request": {
+      "main": [
+        [
+          {
+            "node": "Notify Approval Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rejection Text": {
+      "main": [
+        [
+          {
+            "node": "Notify Meeting Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Text": {
+      "main": [
+        [
+          {
+            "node": "Notify Meeting Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Save Meeting Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Fields (Approval)": {
+      "main": [
+        [
+          {
+            "node": "Update Meeting Status (Approved)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Fields (Rejection)": {
+      "main": [
+        [
+          {
+            "node": "Update Meeting Status (Rejected)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Generate Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Analytics": {
+      "main": [
+        [
+          {
+            "node": "Save Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embedding Model (3072)": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Vector Store Insert",
+            "type": "ai_embedding",
+            "index": 0
+          },
+          {
+            "node": "Portfolio Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Information Extractor": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Data Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MongoDB Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Greeting Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Information Extractor": {
+      "main": [
+        [
+          {
+            "node": "Cancel Meeting Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request for Missing Information": {
+      "main": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request for Valid Data": {
+      "main": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction LLM 2.5 Flash": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Information Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction LLM 2.0 Flash": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Enhanced Information Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find documents": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Meetings Lister",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Data Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Chat1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Meeting Validator": {
+      "main": [
+        [
+          {
+            "node": "Cancel Event Validation Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Chat for Multiple Meetings": {
+      "main": [
+        [
+          {
+            "node": "Meeting Matcher AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete an event": {
+      "main": [
+        [
+          {
+            "node": "Send Event Cancellation Mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Cancellation Text": {
+      "main": [
+        [
+          {
+            "node": "Respond to Chat for Event Cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Chat for Event Cancellation": {
+      "main": [
+        [
+          {
+            "node": "Set Fields (Event Cancellation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Fields (Event Cancellation)": {
+      "main": [
+        [
+          {
+            "node": "Update Meeting Status (Event Cancel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Meeting Status (Event Cancel)": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Meeting Matcher AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Correct Meeting Extractor": {
+      "main": [
+        [
+          {
+            "node": "Set Data Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Event Validation Router": {
+      "main": [
+        [
+          {
+            "node": "Find documents",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request for Missing Information",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request for Valid Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Event Cancellation Mail": {
+      "main": [
+        [
+          {
+            "node": "Event Cancellation Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Data Fields": {
+      "main": [
+        [
+          {
+            "node": "Delete an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meetings Lister": {
+      "main": [
+        [
+          {
+            "node": "Respond to Chat for Multiple Meetings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting Matcher AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Correct Meeting Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MongoDB Chat Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent2",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Miscellaneous Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "QS4YKZBh6t5WcCpY"
+  },
+  "versionId": "fce20538-8151-45c4-a8eb-3e14ee83f453",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "00000cd2bf4757d517595a77fc66ad4fa7dc549b89b104566c86c7a201947452"
+  },
+  "id": "YFJUhIG8z0nNuiVT",
+  "tags": []
+}
